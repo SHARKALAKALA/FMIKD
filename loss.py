@@ -2,37 +2,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 import numpy as np
-from toolbox.lavaszSoftmax import lovasz_softmax
-
-
-# med_frq = [0.000000, 0.452448, 0.637584, 0.377464, 0.585595,
-#            0.479574, 0.781544, 0.982534, 1.017466, 0.624581,
-#            2.589096, 0.980794, 0.920340, 0.667984, 1.172291,
-#            0.862240, 0.921714, 2.154782, 1.187832, 1.178115,
-#            1.848545, 1.428922, 2.849658, 0.771605, 1.656668,
-#            4.483506, 2.209922, 1.120280, 2.790182, 0.706519,
-#            3.994768, 2.220004, 0.972934, 1.481525, 5.342475,
-#            0.750738, 4.040773,2.154782,0.771605,0.781544,0.377464]
-
-class lovaszSoftmax(nn.Module):
-    def __init__(self, classes='present', per_image=False, ignore_index=None):
-        super(lovaszSoftmax, self).__init__()
-        self.ignore_index = ignore_index
-        self.per_image = per_image
-        self.classes = classes
-
-    def forward(self, output, target):
-        if not isinstance(output, tuple):
-            output = (output,)
-        loss = 0
-        for item in output:
-            h, w = item.size(2), item.size(3)
-            # 变换大小需要4维
-            label = F.interpolate(target.unsqueeze(1).float(), size=(h, w))
-            logits = F.softmax(item, dim=1)
-            loss += lovasz_softmax(logits, label.squeeze(1), ignore=self.ignore_index, per_image=self.per_image,
-                                   classes=self.classes)
-        return loss / len(output)
 
 
 class MscBCEWithLogitsLoss(nn.Module):
@@ -135,27 +104,15 @@ class MscKDLoss(nn.Module):
         self.KLD = torch.nn.KLDivLoss(reduction='sum')
         self.temperature = temperature
 
-    def transform(self, x, loss_type='channel'):
+    def transform(self, x):
         B, C, W, H = x.shape
-        if loss_type == 'pixel':
-            x = x.permute(0, 2, 3, 1)
-            x = x.reshape(B, W * H, C)
-        elif loss_type == 'channel':
-            group_size = 1
-            if C % group_size == 0:
-                x = x.reshape(B, C // group_size, -1)
-            else:
-                n = group_size - C % group_size
-                x_pad = -1e9 * torch.ones(B, n, W, H).cuda()
-                x = torch.cat([x, x_pad], dim=1)
-                x = x.reshape(B, (C + n) // group_size, -1)
+        x = x.reshape(B, C // group_size, -1)
+
         return x
 
     def kld(self, pred, soft):
         _, _, h, w = pred.size()
         _, _, H, W = soft.size()
-        # pred = F.interpolate(pred, size=(H, W), mode='bilinear')
-        # soft = F.interpolate(soft, size=(att, w), mode='bilinear')
         p_s = self.transform(pred)
         p_t = self.transform(soft)
         p_s = F.log_softmax(p_s / self.temperature, dim=-1)
